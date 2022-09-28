@@ -66,35 +66,51 @@ Simple conductance based leaky integrate-and-fire neuron model
 Description
 +++++++++++
 
-``iaf_cond_exp_sc`` is an implementation of a spiking neuron using IAF dynamics with
-conductance-based synapses. Incoming spike events induce a postsynaptic change
-of conductance modelled by an exponential function. The exponential function
-is normalized such that an event of weight 1.0 results in a peak conductance of
-1 nS.
-
-See also [1]_.
+``iaf_cond_exp_sc`` is an implementation of a spiking neuron using integrate-and-fire
+dynamics with conductance-based synapses and includes a built-in step current generator.
+Incoming spike events induce a postsynaptic change of conductance modelled by an exponential
+function. The exponential function is normalized such that an event of weight 1.0 results
+in a peak conductance of 1 nS. See also [1]_.
 
 Parameters
 ++++++++++
 
 The following parameters can be set in the status dictionary.
 
-=========== ======  =======================================================
- V_m        mV      Membrane potential
- E_L        mV      Leak reversal potential
- C_m        pF      Capacity of the membrane
- t_ref      ms      Duration of refractory period
- V_th       mV      Spike threshold
- V_reset    mV      Reset potential of the membrane
- E_ex       mV      Excitatory reversal potential
- E_in       mV      Inhibitory reversal potential
- g_L        nS      Leak conductance
- tau_syn_ex ms      Exponential decay time constant of excitatory synaptic
-                    conductance kernel
- tau_syn_in ms      Exponential decay time constant of inhibitory synaptic
-                    conductance kernel
- I_e        pA      Constant input current
-=========== ======  =======================================================
+==================== =====  =======================================================
+ V_m                 mV      Membrane potential
+ E_L                 mV      Leak reversal potential
+ C_m                 pF      Capacity of the membrane
+ t_ref               ms      Duration of refractory period
+ V_th                mV      Spike threshold
+ V_reset             mV      Reset potential of the membrane
+ E_ex                mV      Excitatory reversal potential
+ E_in                mV      Inhibitory reversal potential
+ g_L                 nS      Leak conductance
+ tau_syn_ex          ms      Exponential decay time constant of excitatory synaptic
+                             conductance kernel
+ tau_syn_in          ms      Exponential decay time constant of inhibitory synaptic
+                             conductance kernel
+ I_e                 pA      Constant input current
+
+ amplitude_times     ms      Times at which current changes (list)
+ amplitude_values    pA      Amplitudes of step current current (list)
+ allow_offgrid_times         If True, allow off-grid times (default: False)
+==================== ======  =======================================================
+
+.. note::
+
+	If ``allow_offgrid_spikes`` is set false, times will be rounded to the
+	nearest step if they are less than tic/2 from the step, otherwise NEST
+	reports an error. If true, times are rounded to the nearest step if
+	within tic/2 from the step, otherwise they are rounded up to the *end*
+	of the step.
+
+	Times of amplitude changes must be strictly increasing after conversion
+	to simulation time steps. The option ``allow_offgrid_times`` may be
+	useful, for example, if you are using randomized times for current changes
+	which typically would not fall onto simulation time steps.
+
 
 Sends
 +++++
@@ -176,6 +192,8 @@ private:
   void pre_run_hook();
   void update( Time const&, const long, const long );
 
+  struct Buffers_;
+
   // END Boilerplate function declarations ----------------------------
 
   // Friends --------------------------------------------------------
@@ -205,10 +223,22 @@ private:
     double tau_synI; //!< Time constant for inhibitory synaptic kernel in ms
     double I_e;      //!< Constant Current in pA
 
+    std::vector< Time > amp_time_stamps_;  //!< Times of amplitude changes
+    std::vector< double > amp_values_;     //!< Amplitude values activated at given times
+    bool allow_offgrid_amp_times_;         //!< Allow and round up amplitude times not on steps
+
     Parameters_(); //!< Sets default parameter values
 
     void get( DictionaryDatum& ) const;             //!< Store current values in dictionary
-    void set( const DictionaryDatum&, Node* node ); //!< Set values from dicitonary
+    void set( const DictionaryDatum&, Buffers_& b, Node* node ); //!< Set values from dicitonary
+
+    /**
+     * Return time as Time object if valid, otherwise throw BadProperty
+     *
+     * @param amplitude time, ms
+     * @param previous time stamp
+     */
+    Time validate_time_( double, const Time& );
   };
 
 public:
@@ -272,6 +302,9 @@ private:
     // here.
     double step_;            //!< step size in ms
     double IntegrationStep_; //!< current integration time step, updated by GSL
+
+    size_t I_step_idx_; //!< index of current amplitude
+    double I_step_amp_; //!< current amplitude
 
     /**
      * Input current injected by CurrentEvent.
@@ -368,7 +401,7 @@ inline void
 iaf_cond_exp_sc::set_status( const DictionaryDatum& d )
 {
   Parameters_ ptmp = P_;     // temporary copy in case of errors
-  ptmp.set( d, this );       // throws if BadProperty
+  ptmp.set( d, B_, this );       // throws if BadProperty
   State_ stmp = S_;          // temporary copy in case of errors
   stmp.set( d, ptmp, this ); // throws if BadProperty
 
