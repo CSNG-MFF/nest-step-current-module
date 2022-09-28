@@ -1,0 +1,81 @@
+
+__pycache__/
+build/
+_build/
+install/
+reports/
+
+# compilation artefacts
+pynest/pynestkernel.cxx
+*.la
+*.lo
+*.so
+*.log
+*.o
+*.pyc
+
+Makefile
+
+build/
+install/
+examples/example_logs/
+
+/libnestutil/config.h
+/librandom/randomtest
+/nest/nest
+/sli/sli
+
+# cmake artefacts
+CMakeCache.txt
+CMakeDoxyfile.in
+CMakeFiles/
+CTestTestfile.cmake
+Makefile
+cmake_install.cmake
+CMakeDoxygenDefaults.cmake
+
+# generated files
+doc/fulldoc.conf
+doc/normaldoc.conf
+bin/nest-config
+bin/nest_vars.sh
+libnestutil/config.h
+nest/static_modules.h
+pynest/setup.py
+
+# installation artefacts
+install_manifest.txt
+
+# documentation artefacts
+doc/help/
+doc/auto_examples/
+doc/doctrees/
+doc/html/
+doc/models/
+doc/pynestkernel_mock.py
+
+# created when running examples, e.g. by examples/run_examples.py
+examples/microcircuit.png
+examples/reference_data/
+/examples/matplotlib/fontList.json
+/examples/matplotlib/tex.cache/
+
+# macOS
+.DS_Store
+
+# IDEs / editors / Jupyter
+*.kdev4
+.ipynb_checkpoints/
+TAGS
+tags
+cscope.out
+.vscode/
+.idea/
+.settings/
+.project
+.cproject
+.pydevproject
+.python-version
+
+# Merge conflict artifacts
+*.orig
