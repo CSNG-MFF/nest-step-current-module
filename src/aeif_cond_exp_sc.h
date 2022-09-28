@@ -81,7 +81,7 @@ Description
 
 ``aeif_cond_exp_sc`` is the adaptive exponential integrate and fire neuron
 according to Brette and Gerstner (2005), with postsynaptic
-conductances in the form of truncated exponentials.
+conductances in the form of truncated exponentials;  it includes a built-in step current generator.
 
 This implementation uses the embedded 4th order Runge-Kutta-Fehlberg
 solver with adaptive stepsize to integrate the differential equation.
@@ -91,7 +91,7 @@ The membrane potential is given by the following differential equation:
 .. math::
 
  C dV/dt= -g_L(V-E_L)+g_L \cdot \Delta_T \cdot \exp((V-V_T)/\Delta_T)-g_e(t)(V-E_e) \\
-                                                     -g_i(t)(V-E_i)-w +I_e
+                                                     -g_i(t)(V-E_i)-w + I_e
 
 and
 
@@ -162,6 +162,29 @@ gsl_error_tol real    This parameter controls the admissible error of the
                       GSL integrator. Reduce it if NEST complains about
                       numerical instabilities.
 ============= ======= =========================================================
+
+==================== ======  =======================================================
+**Step current parameters**
+-------------------------------------------------------------------------------
+ amplitude_times     ms      Times at which current changes (list)
+ amplitude_values    pA      Amplitudes of step current current (list)
+ allow_offgrid_times         If True, allow off-grid times (default: False)
+==================== ======  =======================================================
+
+.. note::
+
+	If ``allow_offgrid_spikes`` is set false, times will be rounded to the
+	nearest step if they are less than tic/2 from the step, otherwise NEST
+	reports an error. If true, times are rounded to the nearest step if
+	within tic/2 from the step, otherwise they are rounded up to the *end*
+	of the step.
+
+	Times of amplitude changes must be strictly increasing after conversion
+	to simulation time steps. The option ``allow_offgrid_times`` may be
+	useful, for example, if you are using randomized times for current changes
+	which typically would not fall onto simulation time steps.
+
+
 
 Sends
 +++++
@@ -244,6 +267,8 @@ private:
   void pre_run_hook();
   void update( const Time&, const long, const long );
 
+  struct Buffers_;
+
   // END Boilerplate function declarations ----------------------------
 
   // Friends --------------------------------------------------------
@@ -281,10 +306,22 @@ private:
 
     double gsl_error_tol; //!< Error bound for GSL integrator
 
+    std::vector< Time > amp_time_stamps_;  //!< Times of amplitude changes
+    std::vector< double > amp_values_;     //!< Amplitude values activated at given times
+    bool allow_offgrid_amp_times_;         //!< Allow and round up amplitude times not on steps
+
     Parameters_(); //!< Sets default parameter values
 
     void get( DictionaryDatum& ) const;             //!< Store current values in dictionary
-    void set( const DictionaryDatum&, Node* node ); //!< Set values from dicitonary
+    void set( const DictionaryDatum&, Buffers_& b, Node* node ); //!< Set values from dictionary
+
+    /**
+     * Return time as Time object if valid, otherwise throw BadProperty
+     *
+     * @param amplitude time, ms
+     * @param previous time stamp
+     */
+    Time validate_time_( double, const Time& );
   };
 
 public:
@@ -326,6 +363,7 @@ public:
 
   // ----------------------------------------------------------------
 
+private:
   /**
    * Buffers of the model.
    */
@@ -353,6 +391,9 @@ public:
     // here.
     double step_;            //!< step size in ms
     double IntegrationStep_; //!< current integration time step, updated by GSL
+
+    size_t I_step_idx_; //!< index of current amplitude
+    double I_step_amp_; //!< current amplitude
 
     /**
      * Input current injected by CurrentEvent.
@@ -454,7 +495,7 @@ inline void
 aeif_cond_exp_sc::set_status( const DictionaryDatum& d )
 {
   Parameters_ ptmp = P_;     // temporary copy in case of errors
-  ptmp.set( d, this );       // throws if BadProperty
+  ptmp.set( d, B_, this );       // throws if BadProperty
   State_ stmp = S_;          // temporary copy in case of errors
   stmp.set( d, ptmp, this ); // throws if BadProperty
 
