@@ -224,10 +224,10 @@ nest::Time
 stepcurrentmodule::aeif_cond_exp_sc::Parameters_::validate_time_( double t, const Time& t_previous )
 {
   const double now = kernel().simulation_manager.get_time().get_ms();
-  if ( t <= now )
+  if ( t < now )
   {
     throw BadProperty(
-      String::compose("Amplitude can only change in the future (t > %1).", now ) );
+      String::compose("Amplitude can only change in the future (t >= %1).", now ) );
   }
 
   // Force the amplitude change time to the grid
