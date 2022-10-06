@@ -186,13 +186,6 @@ stepcurrentmodule::iaf_cond_exp_sc::Parameters_::get( DictionaryDatum& d ) const
 nest::Time
 stepcurrentmodule::iaf_cond_exp_sc::Parameters_::validate_time_( double t, const Time& t_previous )
 {
-  const double now = kernel().simulation_manager.get_time().get_ms();
-  if ( t < now )
-  {
-    throw BadProperty(
-      String::compose("Amplitude can only change for the future (t >= %1).", now ) );
-  }
-
   // Force the amplitude change time to the grid
   // First, convert the time to tics, may not be on grid
   Time t_amp = Time::ms( t );
@@ -212,7 +205,12 @@ stepcurrentmodule::iaf_cond_exp_sc::Parameters_::validate_time_( double t, const
     }
   }
 
-  assert( t_amp.is_grid_time() );
+  const Time now = kernel().simulation_manager.get_time();
+  if ( t_amp < now )
+  {
+    throw BadProperty(
+		      String::compose("Amplitude can only change for the future (t >= %1).", now.get_ms() ) );
+  }
 
   // t_amp is now the correct time stamp given the chosen options
   if ( t_amp <= t_previous )
