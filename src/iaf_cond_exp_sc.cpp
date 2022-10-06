@@ -298,7 +298,7 @@ stepcurrentmodule::iaf_cond_exp_sc::Parameters_::set( const DictionaryDatum& d, 
 	if ( not new_times.empty() )
 	{
       // insert first change, we are sure we have one
-      new_stamps.push_back( validate_time_( new_times[ 0 ], Time( Time::ms( 0 ) ) ) );
+      new_stamps.push_back( validate_time_( new_times[ 0 ], Time::neg_inf() ) );
 
       // insert all others
       for ( size_t idx = 1; idx < times_size; ++idx )
