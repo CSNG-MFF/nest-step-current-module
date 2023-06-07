@@ -28,6 +28,7 @@
 // include headers with your own stuff
 #include "aeif_cond_exp_sc.h"
 #include "iaf_cond_exp_sc.h"
+#include "iaf_cond_exp_sc_nc.h"
 
 // Includes from nestkernel:
 #include "connection_manager_impl.h"
@@ -106,4 +107,5 @@ stepcurrentmodule::StepCurrentModule::init( SLIInterpreter* i )
   */
   nest::kernel().model_manager.register_node_model< aeif_cond_exp_sc >( "aeif_cond_exp_sc" );
   nest::kernel().model_manager.register_node_model< iaf_cond_exp_sc >( "iaf_cond_exp_sc" );
+  nest::kernel().model_manager.register_node_model< iaf_cond_exp_sc_nc >( "iaf_cond_exp_sc_nc" );
 } // StepCurrentModule::init()

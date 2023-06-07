@@ -22,6 +22,7 @@ set( MODULE_SOURCES
      stepcurrentmodule.h stepcurrentmodule.cpp
      aeif_cond_exp_sc.h aeif_cond_exp_sc.cpp
      iaf_cond_exp_sc.h iaf_cond_exp_sc.cpp
+     iaf_cond_exp_sc_nc.h iaf_cond_exp_sc_nc.cpp
    )
 
 if ( BUILD_SHARED_LIBS )
