@@ -1,5 +1,5 @@
 /*
- *  iaf_cond_exp_sc_nc.cpp
+ *  aeif_cond_exp_sc_nc.cpp
  *
  *  This file is part of NEST.
  *
@@ -20,11 +20,12 @@
  *
  */
 
-#include "iaf_cond_exp_sc_nc.h"
+#include "aeif_cond_exp_sc_nc.h"
 
 #ifdef HAVE_GSL
 
 // C++ includes:
+#include <cmath>
 #include <cstdio>
 #include <iomanip>
 #include <iostream>
@@ -36,9 +37,9 @@
 #include "numerics.h"
 
 // Includes from nestkernel:
-#include "event.h"
 #include "exceptions.h"
 #include "kernel_manager.h"
+#include "nest_names.h"
 #include "universal_data_logger_impl.h"
 
 // Includes from sli:
@@ -52,32 +53,38 @@
  * Recordables map
  * ---------------------------------------------------------------- */
 
-nest::RecordablesMap< stepcurrentmodule::iaf_cond_exp_sc_nc > stepcurrentmodule::iaf_cond_exp_sc_nc::recordablesMap_;
+nest::RecordablesMap< stepcurrentmodule::aeif_cond_exp_sc_nc > stepcurrentmodule::aeif_cond_exp_sc_nc::recordablesMap_;
 
-namespace nest // template specialization must be placed in namespace
+namespace nest
 {
-// Override the create() method with one call to RecordablesMap::insert_()
-// for each quantity to be recorded.
+/*
+ * template specialization must be placed in namespace
+ *
+ * Override the create() method with one call to RecordablesMap::insert_()
+ * for each quantity to be recorded.
+ */
 template <>
 void
-RecordablesMap< stepcurrentmodule::iaf_cond_exp_sc_nc >::create()
+RecordablesMap< stepcurrentmodule::aeif_cond_exp_sc_nc >::create()
 {
   // use standard names whereever you can for consistency!
-  insert_( nest::names::V_m, &stepcurrentmodule::iaf_cond_exp_sc_nc::get_y_elem_< stepcurrentmodule::iaf_cond_exp_sc_nc::State_::V_M > );
-  insert_( nest::names::g_ex, &stepcurrentmodule::iaf_cond_exp_sc_nc::get_y_elem_< stepcurrentmodule::iaf_cond_exp_sc_nc::State_::G_EXC > );
-  insert_( nest::names::g_in, &stepcurrentmodule::iaf_cond_exp_sc_nc::get_y_elem_< stepcurrentmodule::iaf_cond_exp_sc_nc::State_::G_INH > );
+  insert_( nest::names::V_m, &stepcurrentmodule::aeif_cond_exp_sc_nc::get_y_elem_< stepcurrentmodule::aeif_cond_exp_sc_nc::State_::V_M > );
+  insert_( nest::names::g_ex, &stepcurrentmodule::aeif_cond_exp_sc_nc::get_y_elem_< stepcurrentmodule::aeif_cond_exp_sc_nc::State_::G_EXC > );
+  insert_( nest::names::g_in, &stepcurrentmodule::aeif_cond_exp_sc_nc::get_y_elem_< stepcurrentmodule::aeif_cond_exp_sc_nc::State_::G_INH > );
+  insert_( nest::names::w, &stepcurrentmodule::aeif_cond_exp_sc_nc::get_y_elem_< stepcurrentmodule::aeif_cond_exp_sc_nc::State_::W > );
 }
 }
 
-extern "C" inline int
-stepcurrentmodule::iaf_cond_exp_sc_nc_dynamics( double, const double y[], double f[], void* pnode )
+
+extern "C" int
+stepcurrentmodule::aeif_cond_exp_sc_nc_dynamics( double, const double y[], double f[], void* pnode )
 {
   // a shorthand
-  typedef stepcurrentmodule::iaf_cond_exp_sc_nc::State_ S;
+  typedef stepcurrentmodule::aeif_cond_exp_sc_nc::State_ S;
 
   // get access to node so we can almost work as in a member function
   assert( pnode );
-  const stepcurrentmodule::iaf_cond_exp_sc_nc& node = *( reinterpret_cast< stepcurrentmodule::iaf_cond_exp_sc_nc* >( pnode ) );
+  const stepcurrentmodule::aeif_cond_exp_sc_nc& node = *( reinterpret_cast< stepcurrentmodule::aeif_cond_exp_sc_nc* >( pnode ) );
 
   const bool is_refractory = node.S_.r_ > 0;
 
@@ -88,38 +95,59 @@ stepcurrentmodule::iaf_cond_exp_sc_nc_dynamics( double, const double y[], double
   // good compiler will optimize the verbosity away ...
 
   // Clamp membrane potential to V_reset while refractory, otherwise bound
-  // it to V_th.
-  const double V = is_refractory ? node.P_.V_reset_ : std::min( y[ S::V_M ], node.P_.V_th_ );
+  // it to V_peak. Do not use V_.V_peak_ here, since that is set to V_th if
+  // Delta_T == 0.
+  const double& V = is_refractory ? node.P_.V_reset_ : std::min( y[ S::V_M ], node.P_.V_peak_ );
+  // shorthand for the other state variables
+  const double& g_ex = y[ S::G_EXC ];
+  const double& g_in = y[ S::G_INH ];
+  const double& w = y[ S::W ];
 
-  const double I_syn_exc = y[ S::G_EXC ] * ( V - node.P_.E_ex );
-  const double I_syn_inh = y[ S::G_INH ] * ( V - node.P_.E_in );
-  const double I_L = node.P_.g_L * ( V - node.P_.E_L );
+  const double I_syn_exc = g_ex * ( V - node.P_.E_ex );
+  const double I_syn_inh = g_in * ( V - node.P_.E_in );
 
-  // V dot
-  f[ 0 ] = is_refractory ? 0.0 : ( -I_L + node.B_.I_stim_ + node.B_.I_step_amp_ + node.B_.I_noise_amp_ + node.P_.I_e - I_syn_exc - I_syn_inh ) / node.P_.C_m; // ADDING NOISE
+  const double I_spike =
+    node.P_.Delta_T == 0. ? 0. : ( node.P_.g_L * node.P_.Delta_T * std::exp( ( V - node.P_.V_th ) / node.P_.Delta_T ) );
 
-  f[ 1 ] = -y[ S::G_EXC ] / node.P_.tau_synE;
-  f[ 2 ] = -y[ S::G_INH ] / node.P_.tau_synI;
+  // dv/dt
+  f[ S::V_M ] = is_refractory
+    ? 0.
+    : ( -node.P_.g_L * ( V - node.P_.E_L ) + I_spike - I_syn_exc - I_syn_inh - w + node.P_.I_e + node.B_.I_stim_ + node.B_.I_step_amp_ + node.B_.I_noise_amp_) //NOISE
+      / node.P_.C_m;
+
+  f[ S::G_EXC ] = -g_ex / node.P_.tau_syn_ex; // Synaptic Conductance (nS)
+
+  f[ S::G_INH ] = -g_in / node.P_.tau_syn_in; // Synaptic Conductance (nS)
+
+  // Adaptation current w.
+  f[ S::W ] = ( node.P_.a * ( V - node.P_.E_L ) - w ) / node.P_.tau_w;
 
   return GSL_SUCCESS;
 }
+
 
 /* ----------------------------------------------------------------
  * Default constructors defining default parameters and state
  * ---------------------------------------------------------------- */
 
-stepcurrentmodule::iaf_cond_exp_sc_nc::Parameters_::Parameters_()
-  : V_th_( -55.0 )    // mV
+stepcurrentmodule::aeif_cond_exp_sc_nc::Parameters_::Parameters_()
+  : V_peak_( 0.0 )    // mV
   , V_reset_( -60.0 ) // mV
-  , t_ref_( 2.0 )     // ms
-  , g_L( 16.6667 )    // nS
-  , C_m( 250.0 )      // pF
+  , t_ref_( 0.0 )     // ms
+  , g_L( 30.0 )       // nS
+  , C_m( 281.0 )      // pF
   , E_ex( 0.0 )       // mV
   , E_in( -85.0 )     // mV
-  , E_L( -70.0 )      // mV
-  , tau_synE( 0.2 )   // ms
-  , tau_synI( 2.0 )   // ms
+  , E_L( -70.6 )      // mV
+  , Delta_T( 2.0 )    // mV
+  , tau_w( 144.0 )    // ms
+  , a( 4.0 )          // nS
+  , b( 80.5 )         // pA
+  , V_th( -50.4 )     // mV
+  , tau_syn_ex( 0.2 ) // ms
+  , tau_syn_in( 2.0 ) // ms
   , I_e( 0.0 )        // pA
+  , gsl_error_tol( 1e-6 )
   , amp_time_stamps_()
   , amp_values_()     // pA
   , allow_offgrid_amp_times_( false )
@@ -132,16 +160,19 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::Parameters_::Parameters_()
 {
 }
 
-stepcurrentmodule::iaf_cond_exp_sc_nc::State_::State_( const Parameters_& p )
+stepcurrentmodule::aeif_cond_exp_sc_nc::State_::State_( const Parameters_& p )
   : r_( 0 )
   , y_0_( 0.0 )   // pA NOISE
   , y_1_( 0.0 )   // pA NOISE
 {
-  y_[ V_M ] = p.E_L;
-  y_[ G_EXC ] = y_[ G_INH ] = 0;
+  y_[ 0 ] = p.E_L;
+  for ( size_t i = 1; i < STATE_VEC_SIZE; ++i )
+  {
+    y_[ i ] = 0;
+  }
 }
 
-stepcurrentmodule::iaf_cond_exp_sc_nc::State_::State_( const State_& s )
+stepcurrentmodule::aeif_cond_exp_sc_nc::State_::State_( const State_& s )
   : r_( s.r_ )
   , y_0_( s.y_0_ )   // pA NOISE
   , y_1_( s.y_1_ )   // pA NOISE
@@ -152,8 +183,8 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::State_::State_( const State_& s )
   }
 }
 
-stepcurrentmodule::iaf_cond_exp_sc_nc::State_&
-stepcurrentmodule::iaf_cond_exp_sc_nc::State_::operator=( const State_& s )
+stepcurrentmodule::aeif_cond_exp_sc_nc::State_&
+stepcurrentmodule::aeif_cond_exp_sc_nc::State_::operator=( const State_& s )
 {
   r_ = s.r_;
   y_0_ = s.y_0_; // NOISE
@@ -166,23 +197,29 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::State_::operator=( const State_& s )
 }
 
 /* ----------------------------------------------------------------
- * Parameter and state extractions and manipulation functions
+ * Paramater and state extractions and manipulation functions
  * ---------------------------------------------------------------- */
 
 void
-stepcurrentmodule::iaf_cond_exp_sc_nc::Parameters_::get( DictionaryDatum& d ) const
+stepcurrentmodule::aeif_cond_exp_sc_nc::Parameters_::get( DictionaryDatum& d ) const
 {
-  def< double >( d, nest::names::V_th, V_th_ );
-  def< double >( d, nest::names::V_reset, V_reset_ );
+  def< double >( d, nest::names::C_m, C_m );
+  def< double >( d, nest::names::V_th, V_th );
   def< double >( d, nest::names::t_ref, t_ref_ );
   def< double >( d, nest::names::g_L, g_L );
   def< double >( d, nest::names::E_L, E_L );
+  def< double >( d, nest::names::V_reset, V_reset_ );
   def< double >( d, nest::names::E_ex, E_ex );
   def< double >( d, nest::names::E_in, E_in );
-  def< double >( d, nest::names::C_m, C_m );
-  def< double >( d, nest::names::tau_syn_ex, tau_synE );
-  def< double >( d, nest::names::tau_syn_in, tau_synI );
+  def< double >( d, nest::names::tau_syn_ex, tau_syn_ex );
+  def< double >( d, nest::names::tau_syn_in, tau_syn_in );
+  def< double >( d, nest::names::a, a );
+  def< double >( d, nest::names::b, b );
+  def< double >( d, nest::names::Delta_T, Delta_T );
+  def< double >( d, nest::names::tau_w, tau_w );
   def< double >( d, nest::names::I_e, I_e );
+  def< double >( d, nest::names::V_peak, V_peak_ );
+  def< double >( d, nest::names::gsl_error_tol, gsl_error_tol );
 
   std::vector< double >* times_ms = new std::vector< double >();
   times_ms->reserve( amp_time_stamps_.size() );
@@ -193,7 +230,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::Parameters_::get( DictionaryDatum& d ) co
   ( *d )[ nest::names::amplitude_times ] = DoubleVectorDatum( times_ms );
   ( *d )[ nest::names::amplitude_values ] = DoubleVectorDatum( new std::vector< double >( amp_values_ ) );
   ( *d )[ nest::names::allow_offgrid_times ] = BoolDatum( allow_offgrid_amp_times_ );
- 
+
   ( *d )[ nest::names::mean ] = noise_mean_; // NOISE
   ( *d )[ nest::names::std ] = noise_std_; // NOISE
   ( *d )[ nest::names::std_mod ] = noise_std_mod_; // NOISE
@@ -203,7 +240,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::Parameters_::get( DictionaryDatum& d ) co
 }
 
 nest::Time
-stepcurrentmodule::iaf_cond_exp_sc_nc::Parameters_::validate_time_( double t, const Time& t_previous )
+stepcurrentmodule::aeif_cond_exp_sc_nc::Parameters_::validate_time_( double t, const Time& t_previous )
 {
   // Force the amplitude change time to the grid
   // First, convert the time to tics, may not be on grid
@@ -219,7 +256,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::Parameters_::validate_time_( double t, co
     else
     {
       std::stringstream msg;
-      msg << "iaf_cond_exp_sc_nc: Time point " << t << " is not representable in current resolution.";
+      msg << "aeif_cond_exp_sc_nc: Time point " << t << " is not representable in current resolution.";
       throw BadProperty( msg.str() );
     }
   }
@@ -246,40 +283,80 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::Parameters_::validate_time_( double t, co
 
 
 void
-stepcurrentmodule::iaf_cond_exp_sc_nc::Parameters_::set( const DictionaryDatum& d, Buffers_& b, Node* node )
+stepcurrentmodule::aeif_cond_exp_sc_nc::Parameters_::set( const DictionaryDatum& d, Buffers_& buffers, Node* node )
 {
-  // allow setting the membrane potential
-  nest::updateValueParam< double >( d, nest::names::V_th, V_th_, node );
-  nest::updateValueParam< double >( d, nest::names::V_reset, V_reset_, node );
+  nest::updateValueParam< double >( d, nest::names::V_th, V_th, node );
+  nest::updateValueParam< double >( d, nest::names::V_peak, V_peak_, node );
   nest::updateValueParam< double >( d, nest::names::t_ref, t_ref_, node );
   nest::updateValueParam< double >( d, nest::names::E_L, E_L, node );
-
+  nest::updateValueParam< double >( d, nest::names::V_reset, V_reset_, node );
   nest::updateValueParam< double >( d, nest::names::E_ex, E_ex, node );
   nest::updateValueParam< double >( d, nest::names::E_in, E_in, node );
 
   nest::updateValueParam< double >( d, nest::names::C_m, C_m, node );
   nest::updateValueParam< double >( d, nest::names::g_L, g_L, node );
 
-  nest::updateValueParam< double >( d, nest::names::tau_syn_ex, tau_synE, node );
-  nest::updateValueParam< double >( d, nest::names::tau_syn_in, tau_synI, node );
+  nest::updateValueParam< double >( d, nest::names::tau_syn_ex, tau_syn_ex, node );
+  nest::updateValueParam< double >( d, nest::names::tau_syn_in, tau_syn_in, node );
+
+  nest::updateValueParam< double >( d, nest::names::a, a, node );
+  nest::updateValueParam< double >( d, nest::names::b, b, node );
+  nest::updateValueParam< double >( d, nest::names::Delta_T, Delta_T, node );
+  nest::updateValueParam< double >( d, nest::names::tau_w, tau_w, node );
 
   nest::updateValueParam< double >( d, nest::names::I_e, I_e, node );
-  if ( V_reset_ >= V_th_ )
+
+  nest::updateValueParam< double >( d, nest::names::gsl_error_tol, gsl_error_tol, node );
+
+  if ( V_peak_ < V_th )
   {
-    throw BadProperty( "Reset potential must be smaller than threshold." );
+    throw BadProperty( "V_peak >= V_th required." );
   }
+
+  if ( Delta_T < 0. )
+  {
+    throw BadProperty( "Delta_T must be positive." );
+  }
+  else if ( Delta_T > 0. )
+  {
+    // check for possible numerical overflow with the exponential divergence at
+    // spike time, keep a 1e20 margin for the subsequent calculations
+    const double max_exp_arg = std::log( std::numeric_limits< double >::max() / 1e20 );
+    if ( ( V_peak_ - V_th ) / Delta_T >= max_exp_arg )
+    {
+      throw BadProperty(
+        "The current combination of V_peak, V_th and Delta_T"
+        "will lead to numerical overflow at spike time; try"
+        "for instance to increase Delta_T or to reduce V_peak"
+        "to avoid this problem." );
+    }
+  }
+
+  if ( V_reset_ >= V_peak_ )
+  {
+    throw BadProperty( "Ensure that: V_reset < V_peak ." );
+  }
+
   if ( C_m <= 0 )
   {
-    throw BadProperty( "Capacitance must be strictly positive." );
+    throw BadProperty( "Ensure that C_m >0" );
   }
+
   if ( t_ref_ < 0 )
   {
     throw BadProperty( "Refractory time cannot be negative." );
   }
-  if ( tau_synE <= 0 || tau_synI <= 0 )
+
+  if ( tau_syn_ex <= 0 || tau_syn_in <= 0 || tau_w <= 0 )
   {
     throw BadProperty( "All time constants must be strictly positive." );
   }
+
+  if ( gsl_error_tol <= 0. )
+  {
+    throw BadProperty( "The gsl_error_tol must be strictly positive." );
+  }
+
 
   std::vector< double > new_times;
   const bool times_changed = updateValue< std::vector< double > >( d, nest::names::amplitude_times, new_times );
@@ -330,7 +407,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::Parameters_::set( const DictionaryDatum& 
 
   if ( times_changed or values_changed )
   {
-    b.I_step_idx_ = 0; // reset if we got new data
+    buffers.I_step_idx_ = 0; // reset if we got new data
   }
 
   nest::updateValueParam< double >( d, nest::names::mean, noise_mean_, node ); // NOISE
@@ -367,24 +444,30 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::Parameters_::set( const DictionaryDatum& 
 }
 
 void
-stepcurrentmodule::iaf_cond_exp_sc_nc::State_::get( DictionaryDatum& d ) const
+stepcurrentmodule::aeif_cond_exp_sc_nc::State_::get( DictionaryDatum& d ) const
 {
-  def< double >( d, nest::names::V_m, y_[ V_M ] ); // Membrane potential
+  def< double >( d, nest::names::V_m, y_[ V_M ] );
   def< double >( d, nest::names::g_ex, y_[ G_EXC ] );
   def< double >( d, nest::names::g_in, y_[ G_INH ] );
+  def< double >( d, nest::names::w, y_[ W ] );
   ( *d )[ nest::names::y_0 ] = y_0_; // NOISE
   ( *d )[ nest::names::y_1 ] = y_1_; // NOISE
 }
 
 void
-stepcurrentmodule::iaf_cond_exp_sc_nc::State_::set( const DictionaryDatum& d, const Parameters_&, Node* node )
+stepcurrentmodule::aeif_cond_exp_sc_nc::State_::set( const DictionaryDatum& d, const Parameters_&, Node* node )
 {
   nest::updateValueParam< double >( d, nest::names::V_m, y_[ V_M ], node );
   nest::updateValueParam< double >( d, nest::names::g_ex, y_[ G_EXC ], node );
   nest::updateValueParam< double >( d, nest::names::g_in, y_[ G_INH ], node );
+  nest::updateValueParam< double >( d, nest::names::w, y_[ W ], node );
+  if ( y_[ G_EXC ] < 0 || y_[ G_INH ] < 0 )
+  {
+    throw BadProperty( "Conductances must not be negative." );
+  }
 }
 
-stepcurrentmodule::iaf_cond_exp_sc_nc::Buffers_::Buffers_( iaf_cond_exp_sc_nc& n )
+stepcurrentmodule::aeif_cond_exp_sc_nc::Buffers_::Buffers_( aeif_cond_exp_sc_nc& n )
   : logger_( n )
   , s_( 0 )
   , c_( 0 )
@@ -395,7 +478,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::Buffers_::Buffers_( iaf_cond_exp_sc_nc& n
   // init_buffers_().
 }
 
-stepcurrentmodule::iaf_cond_exp_sc_nc::Buffers_::Buffers_( const Buffers_& b, iaf_cond_exp_sc_nc& n )
+stepcurrentmodule::aeif_cond_exp_sc_nc::Buffers_::Buffers_( const Buffers_& b, aeif_cond_exp_sc_nc& n )
   : logger_( n )
   , s_( 0 )
   , c_( 0 )
@@ -410,7 +493,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::Buffers_::Buffers_( const Buffers_& b, ia
  * Default and copy constructor for node, and destructor
  * ---------------------------------------------------------------- */
 
-stepcurrentmodule::iaf_cond_exp_sc_nc::iaf_cond_exp_sc_nc()
+stepcurrentmodule::aeif_cond_exp_sc_nc::aeif_cond_exp_sc_nc()
   : ArchivingNode()
   , P_()
   , S_( P_ )
@@ -419,7 +502,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::iaf_cond_exp_sc_nc()
   recordablesMap_.create();
 }
 
-stepcurrentmodule::iaf_cond_exp_sc_nc::iaf_cond_exp_sc_nc( const iaf_cond_exp_sc_nc& n )
+stepcurrentmodule::aeif_cond_exp_sc_nc::aeif_cond_exp_sc_nc( const aeif_cond_exp_sc_nc& n )
   : ArchivingNode( n )
   , P_( n.P_ )
   , S_( n.S_ )
@@ -427,7 +510,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::iaf_cond_exp_sc_nc( const iaf_cond_exp_sc
 {
 }
 
-stepcurrentmodule::iaf_cond_exp_sc_nc::~iaf_cond_exp_sc_nc()
+stepcurrentmodule::aeif_cond_exp_sc_nc::~aeif_cond_exp_sc_nc()
 {
   // GSL structs may not have been allocated, so we need to protect destruction
   if ( B_.s_ )
@@ -449,7 +532,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::~iaf_cond_exp_sc_nc()
  * ---------------------------------------------------------------- */
 
 void
-stepcurrentmodule::iaf_cond_exp_sc_nc::init_buffers_()
+stepcurrentmodule::aeif_cond_exp_sc_nc::init_buffers_()
 {
   B_.spike_exc_.clear(); // includes resize
   B_.spike_inh_.clear(); // includes resize
@@ -459,7 +542,9 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::init_buffers_()
   B_.logger_.reset();
 
   B_.step_ = Time::get_resolution().get_ms();
-  B_.IntegrationStep_ = B_.step_;
+
+  // We must integrate this model with high-precision to obtain decent results
+  B_.IntegrationStep_ = std::min( 0.01, B_.step_ );
 
   if ( B_.s_ == 0 )
   {
@@ -472,11 +557,11 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::init_buffers_()
 
   if ( B_.c_ == 0 )
   {
-    B_.c_ = gsl_odeiv_control_y_new( 1e-3, 0.0 );
+    B_.c_ = gsl_odeiv_control_yp_new( P_.gsl_error_tol, P_.gsl_error_tol );
   }
   else
   {
-    gsl_odeiv_control_init( B_.c_, 1e-3, 0.0, 1.0, 0.0 );
+    gsl_odeiv_control_init( B_.c_, P_.gsl_error_tol, P_.gsl_error_tol, 0.0, 1.0 );
   }
 
   if ( B_.e_ == 0 )
@@ -488,29 +573,36 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::init_buffers_()
     gsl_odeiv_evolve_reset( B_.e_ );
   }
 
-  B_.sys_.function = iaf_cond_exp_sc_nc_dynamics;
   B_.sys_.jacobian = NULL;
   B_.sys_.dimension = State_::STATE_VEC_SIZE;
   B_.sys_.params = reinterpret_cast< void* >( this );
-
+  B_.sys_.function = aeif_cond_exp_sc_nc_dynamics;
 
   B_.I_step_idx_ = 0;
   B_.I_step_amp_ = 0.0;
   B_.I_stim_ = 0.0;
- 
+
   B_.next_step_ = 0; // NOISE
   B_.I_noise_amp_ = 0.0; // NOISE
 }
 
 void
-stepcurrentmodule::iaf_cond_exp_sc_nc::pre_run_hook()
+stepcurrentmodule::aeif_cond_exp_sc_nc::pre_run_hook()
 {
   // ensures initialization in case mm connected after Simulate
   B_.logger_.init();
 
-  V_.RefractoryCounts_ = Time( Time::ms( P_.t_ref_ ) ).get_steps();
-  // since t_ref_ >= 0, this can only fail in error
-  assert( V_.RefractoryCounts_ >= 0 );
+  // set the right threshold and GSL function depending on Delta_T
+  if ( P_.Delta_T > 0. )
+  {
+    V_.V_peak = P_.V_peak_;
+  }
+  else
+  {
+    V_.V_peak = P_.V_th; // same as IAF dynamics for spikes if Delta_T == 0.
+  }
+
+  V_.refractory_counts_ = Time( Time::ms( P_.t_ref_ ) ).get_steps();
 
   V_.dt_steps_ = P_.noise_dt_.get_steps(); // NOISE
 
@@ -537,17 +629,16 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::pre_run_hook()
  * ---------------------------------------------------------------- */
 
 void
-stepcurrentmodule::iaf_cond_exp_sc_nc::update( Time const& origin, const long from, const long to )
+stepcurrentmodule::aeif_cond_exp_sc_nc::update( const Time& origin, const long from, const long to )
 {
-
   assert( to >= 0 && ( delay ) from < kernel().connection_manager.get_min_delay() );
   assert( from < to );
+  assert( State_::V_M == 0 );
 
   const long start = origin.get_steps(); //NOISE
 
   for ( long lag = from; lag < to; ++lag )
   {
-
 	if ( B_.I_step_idx_ < P_.amp_time_stamps_.size()
 		 and origin.get_steps() + lag == P_.amp_time_stamps_[ B_.I_step_idx_ ].get_steps() )
 	{
@@ -567,9 +658,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::update( Time const& origin, const long fr
     // to a small integration step size;
     // note that (t+IntegrationStep > step) leads to integration over
     // (t, step] and afterwards setting t to step, but it does not
-    // enforce setting IntegrationStep to step-t; this is of advantage
-    // for a consistent and efficient integration across subsequent
-    // simulation intervals
+    // enforce setting IntegrationStep to step-t
     while ( t < B_.step_ )
     {
       const int status = gsl_odeiv_evolve_apply( B_.e_,
@@ -584,29 +673,47 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::update( Time const& origin, const long fr
       {
         throw GSLSolverFailure( get_name(), status );
       }
-    }
 
-    S_.y_[ State_::G_EXC ] += B_.spike_exc_.get_value( lag );
-    S_.y_[ State_::G_INH ] += B_.spike_inh_.get_value( lag );
-
-    // absolute refractory period
-    if ( S_.r_ )
-    { // neuron is absolute refractory
-      --S_.r_;
-      S_.y_[ State_::V_M ] = P_.V_reset_;
-    }
-    else
-      // neuron is not absolute refractory
-      if ( S_.y_[ State_::V_M ] >= P_.V_th_ )
+      // check for unreasonable values; we allow V_M to explode
+      if ( S_.y_[ State_::V_M ] < -1e3 || S_.y_[ State_::W ] < -1e6 || S_.y_[ State_::W ] > 1e6 )
       {
-        S_.r_ = V_.RefractoryCounts_;
+          throw NumericalInstability( get_name() );
+      }
+
+      // spikes are handled inside the while-loop
+      // due to spike-driven adaptation
+      if ( S_.r_ > 0 )
+      {
         S_.y_[ State_::V_M ] = P_.V_reset_;
+      }
+      else if ( S_.y_[ State_::V_M ] >= V_.V_peak )
+      {
+        S_.y_[ State_::V_M ] = P_.V_reset_;
+        S_.y_[ State_::W ] += P_.b; // spike-driven adaptation
+
+        /* Initialize refractory step counter.
+         * - We need to add 1 to compensate for count-down immediately after
+         *   while loop.
+         * - If neuron has no refractory time, set to 0 to avoid refractory
+         *   artifact inside while loop.
+         */
+        S_.r_ = V_.refractory_counts_ > 0 ? V_.refractory_counts_ + 1 : 0;
 
         set_spiketime( Time::step( origin.get_steps() + lag + 1 ) );
-
         SpikeEvent se;
         kernel().event_delivery_manager.send( *this, se, lag );
       }
+    }
+
+    // decrement refractory count
+    if ( S_.r_ > 0 )
+    {
+      --S_.r_;
+    }
+
+    // apply spikes
+    S_.y_[ State_::G_EXC ] += B_.spike_exc_.get_value( lag );
+    S_.y_[ State_::G_INH ] += B_.spike_inh_.get_value( lag );
 
     // set new input current
     B_.I_stim_ = B_.currents_.get_value( lag );
@@ -629,7 +736,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::update( Time const& origin, const long fr
       B_.I_noise_amp_ = P_.noise_mean_
           + std::sqrt( P_.noise_std_ * P_.noise_std_ + S_.y_1_ * P_.noise_std_mod_ * P_.noise_std_mod_ )
             * V_.normal_dist_( get_vp_specific_rng( get_thread() ) );
-      
+
       // use now as reference, in case we woke up from inactive period
       B_.next_step_ = now + V_.dt_steps_;
     }
@@ -637,7 +744,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::update( Time const& origin, const long fr
 }
 
 void
-stepcurrentmodule::iaf_cond_exp_sc_nc::handle( SpikeEvent& e )
+stepcurrentmodule::aeif_cond_exp_sc_nc::handle( SpikeEvent& e )
 {
   assert( e.get_delay_steps() > 0 );
 
@@ -654,7 +761,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::handle( SpikeEvent& e )
 }
 
 void
-stepcurrentmodule::iaf_cond_exp_sc_nc::handle( CurrentEvent& e )
+stepcurrentmodule::aeif_cond_exp_sc_nc::handle( CurrentEvent& e )
 {
   assert( e.get_delay_steps() > 0 );
 
@@ -665,7 +772,7 @@ stepcurrentmodule::iaf_cond_exp_sc_nc::handle( CurrentEvent& e )
 }
 
 void
-stepcurrentmodule::iaf_cond_exp_sc_nc::handle( DataLoggingRequest& e )
+stepcurrentmodule::aeif_cond_exp_sc_nc::handle( DataLoggingRequest& e )
 {
   B_.logger_.handle( e );
 }
